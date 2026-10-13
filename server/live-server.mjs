@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
 export const SERVER_NAME = 'israel-curlbus-fallback';
-export const VERSION = '1.0.0';
+export const VERSION = '1.3.0';
 const SOURCES = Object.freeze({
   ministryGtfs: 'https://gtfs.mot.gov.il/gtfsfiles/israel-public-transportation.zip',
   ministryDeveloperInfo: 'https://www.gov.il/he/Departments/Topics/developer_information',
@@ -34,6 +34,13 @@ const toolList = [
     description: 'HEAD-only check of the official Israeli Ministry of Transport static GTFS ZIP (last-modified, length, status). This is NOT a trip or live arrival lookup; does not download the large ZIP.',
     inputSchema: {type:'object', properties:{}, additionalProperties:false},
     annotations: {readOnlyHint:true, destructiveHint:false, openWorldHint:true}
+  },
+  {
+    name: 'get_rail_service_updates',
+    title: 'Read notices from the official Israel Railways update webpage',
+    description: 'Fetch public rail.co.il official updates. Report notices only if visible content can be extracted and attributed to the official site; when JavaScript-only or blocked, return SOURCE_UNAVAILABLE rather than claiming no disruptions.',
+    inputSchema: {type:'object',properties:{},additionalProperties:false},
+    annotations: {readOnlyHint:true,destructiveHint:false,openWorldHint:true}
   },
   {
     name: 'get_transit_source_links',
@@ -116,6 +123,66 @@ export async function getOfficialGtfsMetadata(fetchFn=globalThis.fetch, nowFn=()
   finally{cleanup();}
 }
 
+
+// The official page may be JS-rendered. Never mistake an empty fetch for
+// evidence that rail traffic has no disruptions.
+export const RAIL_UPDATES_URL = 'https://rail.co.il/?lan=he&page=updates';
+function stripHtml(markup){
+  return String(markup).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi,' ')
+    .replace(/<[^>]+>/g,' ')
+    .replace(/&#(x[0-9a-f]+|\d+);/gi,(_,n)=>{
+      const code=n[0].toLowerCase()==='x'?parseInt(n.slice(1),16):parseInt(n,10);
+      return code>0&&code<=0x10ffff?String.fromCodePoint(code):' ';
+    })
+    .replace(/&(?:nbsp|amp|quot|apos|lt|gt);/gi,x=>({
+      '&nbsp;':' ','&amp;':'&','&quot;':'"','&apos;':"'",'&lt;':'<','&gt;':'>'
+    })[x.toLowerCase()]||' ')
+    .replace(/\s+/g,' ').trim();
+}
+export function parseOfficialRailUpdates(html) {
+  if(typeof html!=='string')return [];
+  const main=/<main\b[^>]*>([\s\S]*?)<\/main>/i.exec(html)?.[1];
+  if(!main)return []; // Fail closed: navigation / placeholder-only HTML is not a notice list.
+  const sections=[...main.matchAll(/<h([23])\b[^>]*>([\s\S]*?)<\/h\1>/gi)];
+  const notices=[];
+  for(let i=0;i<sections.length&&notices.length<15;i++){
+    const title=stripHtml(sections[i][2]).slice(0,180);
+    if(!/(רכבת|רכבות|תנועת|שינויים|עבודות|תחנות|היסעים|rail|train|service|station|shuttle)/i.test(title))continue;
+    const begin=sections[i].index+sections[i][0].length;
+    const end=sections[i+1]?.index??main.length;
+    const snippet=stripHtml(main.slice(begin,Math.min(end,begin+4500))).slice(0,750);
+    if(snippet.length<35)continue;
+    notices.push({title,description:snippet});
+  }
+  return notices;
+}
+export async function getRailServiceUpdates(fetchFn=globalThis.fetch,nowFn=()=>new Date()) {
+  const {controller,cleanup}=abortAfter(12000);
+  const retrievedAt=nowFn().toISOString();
+  try {
+    const response=await fetchFn(RAIL_UPDATES_URL,{
+      method:'GET',headers:{Accept:'text/html'},signal:controller.signal,redirect:'error'
+    });
+    if(!response.ok) return toolError('OFFICIAL_RAIL_NOTICES_UNAVAILABLE',{
+      source:RAIL_UPDATES_URL,http_status:response.status,retrieved_at:retrievedAt,
+      message:'Official updates webpage could not be read. No claim about current rail disruptions can be made.'});
+    const body=await readLimitedText(response,1100000);
+    const notices=parseOfficialRailUpdates(body);
+    if(notices.length===0) return toolError('OFFICIAL_RAIL_NOTICES_UNAVAILABLE',{
+      source:RAIL_UPDATES_URL,retrieved_at:retrievedAt,
+      reason:'Official page may require JavaScript, or HTML contained no extractable verified notices.',
+      important:'Do not interpret this as zero service disruptions.'});
+    return toolSuccess({source:'Israel Railways official website',source_url:RAIL_UPDATES_URL,
+      retrieved_at:retrievedAt,data_kind:'OFFICIAL_SITE_NOTICES_NOT_REALTIME_SERVICE_STATUS',
+      caveat:'Verify each notice effective date before treating it as currently active. Not an API status guarantee.',
+      notice_count:notices.length,notices});
+  }catch(e){return toolError('OFFICIAL_RAIL_NOTICES_UNAVAILABLE',{
+    source:RAIL_UPDATES_URL,retrieved_at:retrievedAt,detail:String(e?.message||e).slice(0,180),
+    important:'Unable to verify rail service updates; do not invent an all-clear.'
+  });}finally{cleanup();}
+}
+
 export async function processRequest(input, deps={}) {
   const req=input;
   const id=req?.id;
@@ -139,6 +206,7 @@ export async function processRequest(input, deps={}) {
     const nowFn=deps.nowFn??(()=>new Date());
     if (name==='get_curlbus_arrivals') return success(await getCurlbusArrivals(args,fetchFn,nowFn));
     if (name==='get_official_gtfs_metadata') return success(await getOfficialGtfsMetadata(fetchFn,nowFn));
+    if (name==='get_rail_service_updates') return success(await getRailServiceUpdates(fetchFn,nowFn));
     if (name==='get_transit_source_links') return success(toolSuccess({sources:SOURCES,checked_at:nowFn().toISOString(),network_requested:false}));
     return failure(-32602, 'Unknown tool name');
   }
