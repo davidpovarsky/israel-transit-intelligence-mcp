@@ -1,0 +1,40 @@
+name: Verify portable transit MCP
+on:
+  push:
+    branches: ["main", "fix/transit-provider-reliability-v1.3.0"]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline:
+    name: Offline MCP tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+      - run: npm pack --dry-run
+      - name: Launch all stdio servers and list tools
+        run: |
+          for server in curlbus busnearby openbus; do
+            printf '{"jsonrpc":"2.0","id":7,"method":"tools/list"}\n' | node bin/israel-transit-mcp.mjs --server="$server" > "${server}.json"
+            node -e "const f=require('./${server}.json'); if(f.id!==7||!Array.isArray(f.result?.tools)||f.result.tools.length<2)process.exit(1)"
+            echo "$server: $(node -p "require('./${server}.json').result.tools.length") MCP tools discovered"
+          done
+  provider-diagnostics:
+    name: Public-source diagnostics (informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Probe each external provider once; NEVER bypass 403
+        run: node scripts/source-smoke.mjs
