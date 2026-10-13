@@ -4,7 +4,7 @@ Portable, zero-runtime-dependency, read-only MCP stdio servers for Israeli publi
 
 ## Install from GitHub (no npm publication)
 
-The package is **not published to npm**. Use the immutable public GitHub release tag once `v1.3.0` is created:
+The package is **not published to npm**. Use the public GitHub version tag once `v1.3.0` is created:
 
 ```sh
 npx --yes github:davidpovarsky/israel-transit-intelligence-mcp#v1.3.0 --server=curlbus
@@ -38,12 +38,12 @@ Until the tag is created, use the commit SHA of the merged revision in place of 
 }
 ```
 
-The JSON above includes only the **three changed** connections. Preserve the existing independent Israel Railways MCP, which continues to provide `list_stations` and `search_routes`. The new Curlbus server also provides `get_rail_service_updates` from the **official rail.co.il website** as a conditional fallback when the Railways MCP's `get_service_updates` endpoint returns HTTP 404. The fallback returns an explicit unavailable error if the official page cannot be reliably parsed (including JavaScript-only responses). A link alone is **not** treated as successful data extraction.
+The JSON above includes only the **three changed** connections. Preserve the existing independent Israel Railways MCP, which continues to provide `list_stations` and `search_routes`. The new Curlbus server also offers `get_rail_service_updates` from the **official rail.co.il website** as a conditional fallback when the Railways MCP's `get_service_updates` endpoint returns HTTP 404. The fallback returns an explicit unavailable error if the official page is blocked or cannot be reliably parsed (including JavaScript-only responses). Official pages returned HTTP 403 from GitHub-hosted CI during initial testing, so this is **not** yet a reliable machine-readable replacement. A link alone is **not** treated as successful data extraction. Use a browser-capable agent to review the official rail updates page separately if needed; do not claim no disruptions on 403.
 
 ### Sources and tool behavior
 
 - **Curlbus** (`--server=curlbus`): `get_curlbus_arrivals`, `get_official_gtfs_metadata`, `get_rail_service_updates`, `get_transit_source_links`. Arrival visits are from a community source; distinguish realtime estimates from scheduled values based on actual provider fields. Empty arrivals do not prove cancellation.
-- **BusNearby** (`--server=busnearby`): `geocode`, `directions`. Request construction follows the original Shmuelmb/busnearby-mcp implementation. HTTP 403 is an upstream provider-denied response, not a package/install failure; it is **not retried or bypassed**. HTTP 429 and transient errors have explicit diagnostics; no routes are invented.
+- **BusNearby** (`--server=busnearby`): `geocode`, `directions`. Request construction follows the original Shmuelmb/busnearby-mcp implementation. HTTP 403 is an upstream provider-denied response, not a package/install failure; it is **not retried or bypassed**. If the BusNearby geocoder fails, an independent OpenStreetMap Nominatim geocoder can return coordinates (at most 3 candidates) with clearly stated provenance; this does **not** make BusNearby transit directions work. Nominatim queries are occasional interactive requests with an identifying User-Agent and per-process rate limiting; no bulk use. The public official interactive transit planner https://route.bus.gov.il/ is linked when directions are unavailable. HTTP 429 and transient errors have explicit diagnostics; no routes are invented.
 - **OpenBus** (`--server=openbus`): `find_stops`, `search_routes`, `get_stop_arrivals`, `get_vehicle_locations`, `get_route_timetable`, `get_ride_performance`, `list_agencies`. Bounding-box keys are translated to documented `lat__greater_or_equal` / `lat__lower_or_equal` and longitude equivalents. Queries enforce a recent UTC time window and descending timestamp order. Records fail closed unless snapshot, recorded timestamp, and scheduled ride time all agree. Results still **do not guarantee live GPS**.
 - **Israel Railways**: keep existing independent package for stations/timetables. `get_service_updates` still relies on a third-party wrapper with an HTTP 404. The official-site fallback is provided as a separate tool in the Curlbus server.
 
