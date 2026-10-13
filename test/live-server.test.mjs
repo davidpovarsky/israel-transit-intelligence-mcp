@@ -8,7 +8,7 @@ test('MCP initializes and advertises three read-only tools', async()=>{
   const a=await processRequest({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18'}});
   assert.equal(a.result.serverInfo.name,'israel-curlbus-fallback');
   const b=await processRequest({jsonrpc:'2.0',id:2,method:'tools/list'});
-  assert.deepEqual(b.result.tools.map(t=>t.name), ['get_curlbus_arrivals','get_official_gtfs_metadata','get_transit_source_links']);
+  assert.deepEqual(b.result.tools.map(t=>t.name), ['get_curlbus_arrivals','get_official_gtfs_metadata','get_rail_service_updates','get_transit_source_links']);
   assert.ok(b.result.tools.every(t=>t.annotations.readOnlyHint));
   assert.equal(await processRequest({jsonrpc:'2.0',method:'notifications/initialized'}),null);
 });
@@ -27,6 +27,19 @@ test('Positive Curlbus JSON is returned without inventing an ETA',async()=>{
   assert.equal(r.structuredContent.visit_count,1);
   assert.equal(r.structuredContent.retrieved_at,'2026-10-13T00:00:00.000Z');
   assert.equal(r.structuredContent.provider_data.visits[0].eta,5);
+});
+test('Curlbus official mapping keyed by public stop code is decoded and counted correctly',async()=>{
+ const out={errors:[],timestamp:'2026-10-13T20:16:00Z',visits:{'5200':[
+  {line_name:'31',eta:5},{line_name:'62',eta:11}
+ ]},stop_info:{code:'5200'}};
+ const r=await getCurlbusArrivals({stop_code:'5200'},async()=>({ok:true,status:200,headers:mkHeaders({}),text:async()=>JSON.stringify(out)}),FIXED);
+ assert.equal(r.isError,false);assert.equal(r.structuredContent.visit_count,2);
+ assert.equal(r.structuredContent.visits[0].line_name,'31');
+ assert.equal(r.structuredContent.empty_visits,false);
+});
+test('Curlbus response missing requested stop visits fails closed',async()=>{
+ const r=await getCurlbusArrivals({stop_code:'5200'},async()=>({ok:true,status:200,headers:mkHeaders({}),text:async()=>JSON.stringify({visits:{'9999':[]}})}),FIXED);
+ assert.equal(r.isError,true);assert.match(r.content[0].text,/SCHEMA_MISMATCH_OR_NO_MATCHING_STOP/);
 });
 test('Empty visits are distinct from cancellation',async()=>{
   const r=await getCurlbusArrivals({stop_code:'44'},async()=>({ok:true,status:200,headers:mkHeaders({}),text:async()=>'{"visits":[]}'}),FIXED);
