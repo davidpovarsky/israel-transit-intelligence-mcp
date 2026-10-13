@@ -35,7 +35,7 @@ function checkNum(s,key,min,max){if(s!==undefined&&(!Number.isFinite(s)||s<min||
 function israelMidnight(date){
   const utc=Date.parse(`${date}T00:00:00Z`);
   const tzone=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Jerusalem',timeZoneName:'shortOffset'});
-  const offsetName=tzone.formatToParts(new Date(utc)).find(p=>p.type==='timeZoneName')?.value;
+  const offsetName=tzone.formatToParts(new Date(utc-6*60*60_000)).find(p=>p.type==='timeZoneName')?.value;
   const match=/GMT([+-])(\d{1,2})(?::(\d{2}))?/.exec(offsetName??'');
   if(!match) throw new Error('Unable to resolve Israel timezone offset');
   const minutes=Number(match[2])*60+Number(match[3]??'0');
@@ -98,7 +98,9 @@ function snapshotTime(raw){
   if(!m) return NaN;
   const ints=m.slice(1).map(Number);
   if(ints[1]<1||ints[1]>12||ints[2]<1||ints[2]>31||ints[3]>23||ints[4]>59) return NaN;
-  return Date.UTC(ints[0],ints[1]-1,ints[2],ints[3],ints[4]);
+  const date=new Date(Date.UTC(ints[0],ints[1]-1,ints[2],ints[3],ints[4]));
+  if(date.getUTCFullYear()!==ints[0]||date.getUTCMonth()+1!==ints[1]||date.getUTCDate()!==ints[2])return NaN;
+  return date.getTime();
 }
 export function verifyLiveLocations(rows,now=new Date()) {
   const accepted=[],reasons={};
@@ -109,7 +111,7 @@ export function verifyLiveLocations(rows,now=new Date()) {
     const snap=snapshotTime(id);
     const scheduled=Date.parse(row?.siri_ride__scheduled_start_time??row?.siri_ride?.scheduled_start_time??'');
     if(!Number.isFinite(rec)||rec<now.getTime()-MAX_LIVE_AGE_MS||rec>now.getTime()+60_000) reason='recorded_time_not_recent';
-    else if(!Number.isFinite(snap)||Math.abs(snap-israelLocalMillis(new Date(rec)))>SOURCE_MISMATCH_MS||Math.abs(snap-israelLocalMillis(now))>MAX_LIVE_AGE_MS+2*60_000) reason='snapshot_missing_or_mismatched';
+    else if(!Number.isFinite(snap)||Math.min(Math.abs(snap-israelLocalMillis(new Date(rec))),Math.abs(snap-rec))>SOURCE_MISMATCH_MS||Math.min(Math.abs(snap-israelLocalMillis(now)),Math.abs(snap-now.getTime()))>MAX_LIVE_AGE_MS+2*60_000) reason='snapshot_missing_or_mismatched';
     else if(!Number.isFinite(scheduled)||scheduled>now.getTime()+2*60*60_000||scheduled<now.getTime()-36*60*60_000) reason='scheduled_ride_missing_or_stale';
     else if(!Number.isFinite(row?.lat)||!Number.isFinite(row?.lon)||row.lat<-90||row.lat>90||row.lon<-180||row.lon>180) reason='coordinates_missing_or_invalid';
     if(reason) reasons[reason]=(reasons[reason]??0)+1;
