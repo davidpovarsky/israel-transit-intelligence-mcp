@@ -89,16 +89,28 @@ export async function getCurlbusArrivals(args, fetchFn=globalThis.fetch, nowFn=(
     let data;
     try {data=JSON.parse(text);} catch {return toolError('Provider returned non-JSON response', {provider:'Curlbus', url, retrieved_at:readAt});}
     if (!data || typeof data !== 'object' || Array.isArray(data)) return toolError('Provider returned unexpected JSON structure', {provider:'Curlbus', url, retrieved_at:readAt});
-    const visits=Array.isArray(data.visits)?data.visits:null;
+    // Curlbus's documented JSON API serializes visits as a map keyed by the
+    // requested public stop code. Earlier adapters mistakenly expected an array.
+    const sourceVisits=data.visits;
+    const visits=Array.isArray(sourceVisits) ? sourceVisits :
+      sourceVisits && typeof sourceVisits==='object' && !Array.isArray(sourceVisits)
+        ? (sourceVisits[stopCode] ?? sourceVisits[String(Number(stopCode))] ?? null)
+        : null;
     const providerErrors=Array.isArray(data.errors)?data.errors:[];
+    if(!Array.isArray(visits))return toolError('Curlbus response missing visits list for requested stop',{
+      provider:'Curlbus',stop_code:stopCode,retrieved_at:readAt,
+      reason:'SCHEMA_MISMATCH_OR_NO_MATCHING_STOP',provider_errors:providerErrors,
+      important:'Do not interpret missing visits as no scheduled buses or as a cancellation.'
+    });
     const payload={
       source:'Curlbus (community; not an official MOT publication)',
       stop_code:stopCode,
       retrieved_at:readAt,
       provider_http_date:response.headers?.get?.('date')||null,
       data_kind:'provider_arrival_data; live/scheduled distinction depends on upstream fields',
-      visit_count:visits===null?null:visits.length,
-      empty_visits:visits!==null && visits.length===0,
+      visit_count:visits.length,
+      empty_visits:visits.length===0,
+      visits,
       provider_errors:providerErrors,
       caveat:'A missing/empty visit does not establish a cancellation; verify direction, stop code, operator and source freshness.',
       provider_data: data
