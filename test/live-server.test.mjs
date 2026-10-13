@@ -8,7 +8,7 @@ test('MCP initializes and advertises three read-only tools', async()=>{
   const a=await processRequest({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18'}});
   assert.equal(a.result.serverInfo.name,'israel-curlbus-fallback');
   const b=await processRequest({jsonrpc:'2.0',id:2,method:'tools/list'});
-  assert.deepEqual(b.result.tools.map(t=>t.name), ['get_curlbus_arrivals','get_official_gtfs_metadata','get_transit_source_links']);
+  assert.deepEqual(b.result.tools.map(t=>t.name), ['get_curlbus_arrivals','get_official_gtfs_metadata','get_rail_service_updates','get_transit_source_links']);
   assert.ok(b.result.tools.every(t=>t.annotations.readOnlyHint));
   assert.equal(await processRequest({jsonrpc:'2.0',method:'notifications/initialized'}),null);
 });
