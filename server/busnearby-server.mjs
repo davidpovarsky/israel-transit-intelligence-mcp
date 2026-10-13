@@ -15,7 +15,7 @@ import { resolve } from 'node:path';
 
 const BASE_URL = 'https://api.busnearby.co.il';
 export const SERVER_NAME = 'busnearby-israel';
-export const SERVER_VERSION = '1.1.0';
+export const SERVER_VERSION = '1.3.0';
 const VALID_OPTIMIZE = new Set(['QUICK','SAFE','FLAT','GREENWAYS','TRIANGLE']);
 const VALID_MODES = new Set(['WALK','TRANSIT','TRAM','RAIL','BUS','CABLE_CAR','SHARE_TAXI']);
 
@@ -126,9 +126,17 @@ async function getJSON(endpoint, params, fetchFn, nowFn) {
   const timeout=setTimeout(()=>controller.abort(),13000);
   timeout.unref?.();
   try {
-    const res=await fetchFn(url.toString(),{method:'GET',headers:{Accept:'application/json','User-Agent':'IsraelTransitIntelligence/1.1'},signal:controller.signal,redirect:'error'});
+    const res=await fetchFn(url.toString(),{method:'GET',signal:controller.signal,redirect:'error'});
     const retrievedAt=nowFn().toISOString();
-    if(!res.ok) throw new Error(`HTTP ${res.status} from BusNearby API`);
+    if(!res.ok) {
+      const error = new Error(`HTTP ${res.status} from BusNearby API`);
+      error.http_status=res.status;
+      error.provider_code=res.status===403?'PROVIDER_FORBIDDEN':res.status===429?'PROVIDER_RATE_LIMITED':'PROVIDER_HTTP_ERROR';
+      const retryAfter=res.headers?.get?.('retry-after');
+      if(retryAfter && retryAfter.length<100) error.retry_after=retryAfter;
+      // No automatic retries on 403: provider access restrictions must be respected.
+      throw error;
+    }
     const length=Number(res.headers?.get?.('content-length'));
     if(Number.isFinite(length)&&length>950000) throw new Error('Response too large');
     const raw=await res.text();
@@ -149,7 +157,13 @@ export async function callBusNearby(name,args,fetchFn=globalThis.fetch,nowFn=()=
     if(name==='directions' && (!isObject(parsed)||!isObject(parsed.plan))) return toolError('BusNearby route plan missing/invalid', {provider:'BusNearby',retrieved_at:retrievedAt});
     return ok({source:'BusNearby API via Shmuelmb MCP portable integration',provider:'BusNearby',retrieved_at:retrievedAt,timezone:'Asia/Jerusalem',data_kind:name==='geocode'?'PLACE_GEOCODING':'TRANSIT_ROUTE_PLAN', caveat:name==='directions'?'Real-time may be present on individual transit legs, but not every trip or leg is verified live. Check leg.realTime and delays; confirm service updates separately.':'Disambiguate duplicate addresses/place names before routing.', result:parsed});
   } catch(err) {
-    return toolError('BusNearby provider call failed',{provider:'BusNearby',tool:name,detail:String(err?.message||err).slice(0,200)});
+    return toolError('BusNearby provider call failed',{
+      provider:'BusNearby',tool:name,provider_code:err?.provider_code||'NETWORK_OR_FORMAT_ERROR',
+      http_status:err?.http_status??null,retry_after:err?.retry_after??null,
+      retryable:[429,502,503,504].includes(err?.http_status),
+      detail:String(err?.message||err).slice(0,200),
+      caveat:err?.http_status===403?'Provider denied access. Do not bypass access controls or invent geocoding/directions.':'Do not invent missing routes or locations.'
+    });
   }
 }
 
